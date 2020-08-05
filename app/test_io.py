@@ -16,3 +16,6 @@ def setup(pin, mode):
 
 def add_event_detect(pin, edge, callback, bouncetime):
     pass
+
+def cleanup():
+    pass

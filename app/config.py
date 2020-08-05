@@ -13,13 +13,7 @@ class Config(object):
     hostname = "0.0.0.0"
 
     port = 8007
-    state_file = "state.json"
-
-    # Switch data
-    switches = ['1']
-    on_pins = [9, 1, 7]
-    off_pins = [11, 0, 8]
-    switch_pulse_time_in_secs = 1.5
+    state_file = basedir + "/environment_config.json"
 
     # ZMQ Connection stuff
     web_controller_conn_str = "tcp://127.0.0.1:2000"
