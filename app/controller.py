@@ -1,6 +1,8 @@
-from config import Config
+from modules.config import Config
 from logger import setup_logger
-from updater import Updater
+from modules.updater import Updater
+from modules.gpio_interface import Dispatcher
+#from modules.temperature import Thermostat
 import logging, datetime, time, atexit, json, multiprocessing
 
 id = "GPIO controller: "
@@ -18,41 +20,26 @@ def init_enviroment_config():
     with open(Config.state_file) as json_file:
         data = json.load(json_file)
         if data != None:
-            environment_config = data
+            return data
 
         else:
-            environment_config = {
+            data = {
                 "temp" : "0.0",
                 "tempUnits" : "C",
                 "humidity" : "0.0",
                 "elapsed" : "0",
-                "mode" : "off",
+                "mode" : "auto",
                 "fan_state" : "on",
                 "light_state" : "on",
-                "pump_state" : "off"
+                "pump_state" : "off",
+                "interval_start" : 23,
+                "interval_stop" : 11
             }
+            return data
 
-# Updated config flag
-environment_config = init_enviroment_config()
-
-# Job functions
-def water(action, forLength=None):
-	toggleComponent(Config.PUMP_PIN, action, forLength)
-
-def fan(action, forLength=None):
-    toggleComponent(Config.FAN_PIN, action, forLength)
-
-def light(action, forLength=None):
-	toggleComponent(Config.LIGHT_PIN, action, forLength)
-
-def toggleComponent(pin, action, forLength=None):
-	if (forLength is not None):
-		GPIO.output(pin, GPIO.HIGH)
-		time.sleep(forLength)
-		GPIO.output(pin, GPIO.LOW)
-	else:
-		if action == Config.START_ACTION: GPIO.output(pin, GPIO.HIGH)
-		else: GPIO.output(pin, GPIO.LOW)
+            # Serializing json  
+            with open(Config.state_file, 'w') as outfile:
+                json.dumps(environment_config, outfile)
 
 # Update function that catches incoming config changes from the web server
 def check_for_updates():
@@ -61,21 +48,57 @@ def check_for_updates():
         message = updater.run()
         time.sleep (1) 
         if message != None:
-            environment_config = message
+            Config.environment_config = message
             with open(Config.state_file, 'w') as outfile:
-                json.dump(environment_config, outfile)
+                json.dumps(message, outfile)
         print('update done')
+
+# Light scheduel check function
+def time_in_range(start, end, x):
+    if start <= end:
+        return start <= x <= end
+    else:
+        return start <= x or x <= end
 
 # Enviroment control function
 def eval_environment_state():
     while True:
+        #temperature = Thermostat.read_temp()
+        temperature = 26
+        light_flag = time_in_range(datetime.time(Config.environment_config.interval_start, 0, 0), datetime.time(Config.environment_config.interval_stop, 0, 0), datetime.now())
+        if Config.environment_config.mode == "auto":
+            if temperature >= Config.environment_config.temp:
+                Dispatcher.fan(1, None)
+            else:
+                Dispatcher.fan(0, None)
+
+            if light_flag == True:
+                Dispatcher.light(1, None)
+            else:
+                Dispatcher.light(0, None)
+
+        else:
+            if Config.environment_config.fan_state == "on":
+                Dispatcher.fan(1, None)
+            else:
+                Dispatcher.fan(0, None) 
+
+            if Config.environment_config.pump_state == "on":
+                Dispatcher.pump(1, None)
+            else:
+                Dispatcher.pump(0, None)
+            
+            if Config.environment_config.light_state == "on":
+                Dispatcher.light(1, None)
+            else:
+                Dispatcher.light(0, None)
+
         print('eval done')
+
         time.sleep(5)
 
 def exit_handler():
     GPIO.cleanup()
-
-atexit.register(exit_handler)
 
 # Main
 def main():
@@ -91,6 +114,11 @@ if __name__ == '__main__':
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(Config.LIGHT_PIN, GPIO.OUT)
     GPIO.setup(Config.PUMP_PIN, GPIO.OUT)
+
+    atexit.register(exit_handler)
+
+    # Updated config flag
+    Config.environment_config = init_enviroment_config()
 
     update_process = multiprocessing.Process(target=check_for_updates)
     environment_process = multiprocessing.Process(target=eval_environment_state)
