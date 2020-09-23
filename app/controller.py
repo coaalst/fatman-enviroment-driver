@@ -1,55 +1,27 @@
-from modules.config import Config
+import os
 from logger import setup_logger
 from modules.updater import Updater
 from modules.gpio_interface import Dispatcher
-#from modules.temperature import Thermostat
-import logging, datetime, time, atexit, json, multiprocessing
+#from modules.sensor_interface import Fetcher
 
-id = "GPIO controller: "
+import logging, datetime, time, json, multiprocessing
+from configparser import ConfigParser
 
-# GPIO init
-try:
-    import RPi.GPIO as GPIO
-except ModuleNotFoundError:
-    print(id + "Error importing RPi.GPIO, switching to mock up")
-    import test_io as GPIO
+id = "Controller: "
 
 # Initial setup
-def init_enviroment_config():
+def init_enviroment_config(config):
 
-    with open(Config.state_file) as json_file:
-        data = json.load(json_file)
-        if data != None:
-            return data
-
-        else:
-            data = {
-                "temp" : "0.0",
-                "tempUnits" : "C",
-                "humidity" : "0.0",
-                "elapsed" : "0",
-                "mode" : "auto",
-                "fan_state" : "on",
-                "light_state" : "on",
-                "pump_state" : "off",
-                "interval_start" : 23,
-                "interval_stop" : 11
-            }
-            return data
-
-            # Serializing json  
-            with open(Config.state_file, 'w') as outfile:
-                json.dumps(environment_config, outfile)
+   return config.read(os.path.abspath(os.path.dirname(__file__)) + "\..\conf_data.properties")
 
 # Update function that catches incoming config changes from the web server
 def check_for_updates():
     while True:
-        updater = Updater(Config.web_controller_conn_str)
+        updater = Updater("tcp://127.0.0.1:2000")
         message = updater.run()
         time.sleep (1) 
         if message != None:
-            Config.environment_config = message
-            with open(Config.state_file, 'w') as outfile:
+            with open(os.path.abspath(os.path.dirname(__file__)) + "\..\conf_data.properties", 'w') as outfile:
                 json.dumps(message, outfile)
         print('update done')
 
@@ -60,14 +32,20 @@ def time_in_range(start, end, x):
     else:
         return start <= x or x <= end
 
+# Fetches data from the arduino controller via Serial
+def fetch_sensor_data():
+    pass
+
 # Enviroment control function
-def eval_environment_state():
+def eval_environment_state(conf_data):
     while True:
-        #temperature = Thermostat.read_temp()
+        #temperature, humidity = Fetcher.fetch_sensor_data()
         temperature = 26
-        light_flag = time_in_range(datetime.time(Config.environment_config.interval_start, 0, 0), datetime.time(Config.environment_config.interval_stop, 0, 0), datetime.now())
-        if Config.environment_config.mode == "auto":
-            if temperature >= Config.environment_config.temp:
+        humidity = 50
+        light_flag = time_in_range(datetime.time(int(conf_data["interval_start"]), 0, 0), datetime.time(int(conf_data["interval_stop"]), 0, 0), datetime.time())
+
+        if conf_data["mode"] == "auto":
+            if temperature >= float(conf_data["temp"]):
                 Dispatcher.fan(1, None)
             else:
                 Dispatcher.fan(0, None)
@@ -77,18 +55,23 @@ def eval_environment_state():
             else:
                 Dispatcher.light(0, None)
 
+            if humidity <= float(conf_data["humidity"]):
+                Dispatcher.pump(1, None)
+            else:
+                Dispatcher.pump(0, None)
+
         else:
-            if Config.environment_config.fan_state == "on":
+            if conf_data["fan_state"] == "on":
                 Dispatcher.fan(1, None)
             else:
                 Dispatcher.fan(0, None) 
 
-            if Config.environment_config.pump_state == "on":
+            if conf_data["pump_state"] == "on":
                 Dispatcher.pump(1, None)
             else:
                 Dispatcher.pump(0, None)
             
-            if Config.environment_config.light_state == "on":
+            if conf_data["light_state"] == "on":
                 Dispatcher.light(1, None)
             else:
                 Dispatcher.light(0, None)
@@ -97,31 +80,38 @@ def eval_environment_state():
 
         time.sleep(5)
 
-def exit_handler():
-    GPIO.cleanup()
-
 # Main
 def main():
     #log
     time.sleep(1)
 
+
 if __name__ == '__main__':
 
     # Logger setup
-    logger = setup_logger("master", Config.master_log_file, logging.DEBUG)
+    logger = setup_logger("master", "fatman_master.log", logging.DEBUG)
 
-    # Pin setup
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(Config.LIGHT_PIN, GPIO.OUT)
-    GPIO.setup(Config.PUMP_PIN, GPIO.OUT)
-
-    atexit.register(exit_handler)
+    # Parser
+    config = ConfigParser()
 
     # Updated config flag
-    Config.environment_config = init_enviroment_config()
+    conf_data = init_enviroment_config(config)
 
+    conf_data = {
+        "temp" : "0.0",
+        "tempUnits" : "C",
+        "humidity" : "60.0",
+        "elapsed" : "0",
+        "mode" : "auto",
+        "fan_state" : "on",
+        "light_state" : "on",
+        "pump_state" : "off",
+        "interval_start" : 23,
+        "interval_stop" : 11
+    }   
+    print(conf_data)
     update_process = multiprocessing.Process(target=check_for_updates)
-    environment_process = multiprocessing.Process(target=eval_environment_state)
+    environment_process = multiprocessing.Process(target=eval_environment_state, args=(conf_data, ))
 
     print(id + "Starting Fatman environmnet config updater...")
     update_process.start()
